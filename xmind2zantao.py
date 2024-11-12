@@ -4,11 +4,11 @@ import shutil
 import sqlite3
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QTableWidget, \
     QTableWidgetItem, QFileDialog, QLabel, QHBoxLayout, QHeaderView, QSizePolicy, QMessageBox
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont, QColor
+from PyQt5.QtCore import Qt, QEvent
+from PyQt5.QtGui import QFont, QColor, QCursor, QIcon
 from datetime import datetime
 
-from xmind2testcase.utils import get_xmind_testcase_list
+from xmind2testcase.utils import get_xmind_testcase_list, get_xmind_testsuites
 from xmind2testcase.zentao import xmind_to_zentao_csv_file
 
 
@@ -17,8 +17,13 @@ class PreviewWindow(QMainWindow):
         super().__init__()
         self.xmind_file = xmind_file
         self.test_cases = testcases  # 将 JSON 数据保存为类的成员变量
+        testsuites = get_xmind_testsuites(xmind_file)
+        self.suite_count = 0
+        for suite in testsuites:
+            self.suite_count += len(suite.sub_suites)
         self.setWindowTitle(f"{os.path.basename(xmind_file)} - Preview")
         self.setGeometry(x, y, 1000, 800)
+        self.setWindowIcon(QIcon("logo.png"))
         self.initUI()
 
     def initUI(self):
@@ -26,14 +31,30 @@ class PreviewWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        self.back_button = self.create_button("返回主页", "#FF5722", "#F44336", self.goBack)
-        main_layout.addWidget(self.back_button)
-
         self.title_label = QLabel(f"Preview: {os.path.basename(self.xmind_file)}", self)
-        self.title_label.setFont(QFont("Arial", 18, QFont.Bold))
+        self.title_label.setFont(QFont("Arial", 20, QFont.Bold))
         self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setStyleSheet("color: #2196F3;")
         main_layout.addWidget(self.title_label)
+
+        button_layout = QHBoxLayout()
+        self.testsuites_label = QLabel(f'TestSuites: {self.suite_count}', self)
+        self.testsuites_label.setFont(QFont("Arial", 15, QFont.Bold))
+        self.testsuites_label.setAlignment(Qt.AlignCenter)
+        self.testsuites_label.setStyleSheet("color: #2196F3;")
+
+        self.testcases_label = QLabel(f'TestCases: {len(self.test_cases)}', self)
+        self.testcases_label.setFont(QFont("Arial", 15, QFont.Bold))
+        self.testcases_label.setAlignment(Qt.AlignCenter)
+        self.testcases_label.setStyleSheet("color: #2196F3;")
+
+        self.CSV_button = self.create_button("下载CSV文件", "#FF5722", "#F44336", self.export_csv)
+        self.back_button = self.create_button("返回主页", "#FF5722", "#F44336", self.goBack)
+        button_layout.addWidget(self.testsuites_label)
+        button_layout.addWidget(self.testcases_label)
+        button_layout.addWidget(self.CSV_button)
+        button_layout.addWidget(self.back_button)
+        main_layout.addLayout(button_layout)
 
         # 创建表格
         self.table_widget = QTableWidget(self)
@@ -50,9 +71,6 @@ class PreviewWindow(QMainWindow):
 
         # 添加表格到布局
         main_layout.addWidget(self.table_widget)
-
-        self.download_button = self.create_button("下载并返回主页", "#8BC34A", "#7CB342", self.downloadAndGoBack)
-        main_layout.addWidget(self.download_button)
 
         # 初始化窗口大小
         self.show()
@@ -190,9 +208,31 @@ class PreviewWindow(QMainWindow):
         self.main_window.show()
         self.main_window.move(self.main_window.saved_geometry.topLeft())
 
-    def downloadAndGoBack(self):
-        print(f"文件 {os.path.basename(self.xmind_file)} 已下载")
-        self.goBack()
+    def export_csv(self):
+        zentao_csv_file = xmind_to_zentao_csv_file(self.xmind_file)
+        print('Convert XMind file to zentao csv file successfully: %s' % zentao_csv_file)
+
+        file_name_cvs = os.path.basename(zentao_csv_file)
+        print(f"导出 {file_name_cvs} 为 CSV")
+
+        # Check if the file exists
+        if not os.path.exists(zentao_csv_file):
+            self.show_message("错误", f"文件 {file_name_cvs} 不存在")
+            return
+
+        # Use QFileDialog to ask the user where to save the downloaded file
+        save_path, _ = QFileDialog.getSaveFileName(self, "保存 CSV 文件", file_name_cvs, "XMind Files (*.csv)")
+
+        # If a path is selected by the user
+        if save_path:
+            try:
+                # Copy the file to the selected location
+                shutil.copy(zentao_csv_file, save_path)
+                print(f"文件 {file_name_cvs} 已下载到 {save_path}")
+                self.show_message("成功", f"文件已成功下载到 {save_path}")
+            except Exception as e:
+                print(f"下载文件失败: {str(e)}")
+                self.show_message("错误", f"下载文件失败: {str(e)}")
 
     def create_button(self, text, color, hover_color, func):
         button = QPushButton(text, self)
@@ -210,6 +250,9 @@ class PreviewWindow(QMainWindow):
         """)
         button.clicked.connect(func)
         return button
+
+    def show_message(self, title, message):
+        QMessageBox.information(self, title, message)
 
 
 class Database:
@@ -252,6 +295,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("XMind 转换器")
         self.setGeometry(100, 100, 1000, 800)
+        self.setWindowIcon(QIcon("logo.png"))
         self.db = Database()
         self.saved_geometry = self.geometry()
         self.upload_folder = "upload"
@@ -263,14 +307,22 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        self.title_label = QLabel("XMind 转换器", self)
+        self.title_label = QLabel("XMIND TO TESTCASE", self)
         self.title_label.setAlignment(Qt.AlignCenter)
-        self.title_label.setFont(QFont("Arial", 24, QFont.Bold))
+        self.title_label.setFont(QFont("Arial", 30, QFont.Bold))
         self.title_label.setStyleSheet("color: #4CAF50;")
         main_layout.addWidget(self.title_label)
 
-        self.upload_button = self.create_button("上传 XMind 文件", "#4CAF50", "#45a049", self.uploadFile)
-        main_layout.addWidget(self.upload_button)
+        # 创建标签 "请选择文件"
+        self.select_file_label = QLabel("--> 点击这里选择您的XMind文件 <--")
+        self.select_file_label.setFont(QFont("Arial", 20))
+        self.select_file_label.setStyleSheet("color: blue;")
+        self.select_file_label.setCursor(QCursor(Qt.PointingHandCursor))
+        self.select_file_label.mousePressEvent = self.on_select_file_click
+        self.select_file_label.setAlignment(Qt.AlignCenter)
+        # 为标签安装事件过滤器
+        self.select_file_label.installEventFilter(self)
+        main_layout.addWidget(self.select_file_label)
 
         self.convert_button = self.create_button("开始转换", "#2196F3", "#1976D2", self.startConversion)
         main_layout.addWidget(self.convert_button)
@@ -282,7 +334,7 @@ class MainWindow(QMainWindow):
         self.style_table(self.table_widget)
         main_layout.addWidget(self.table_widget)
 
-        self.xmind_file = None
+        self.selected_file_path = None
         self.load_data()
 
     def create_button(self, text, color, hover_color, func):
@@ -390,7 +442,7 @@ class MainWindow(QMainWindow):
         print(f"导出 {file_name_cvs} 为 CSV")
 
         # Check if the file exists
-        if not os.path.exists(file_path):
+        if not os.path.exists(zentao_csv_file):
             self.show_message("错误", f"文件 {file_name_cvs} 不存在")
             return
 
@@ -437,20 +489,51 @@ class MainWindow(QMainWindow):
             print(f"文件 {file_path_csv} 已被删除")
         self.load_data()  # Reload data to update the table
 
-    def uploadFile(self):
-        file, _ = QFileDialog.getOpenFileName(self, "选择 XMind 文件", "", "XMind Files (*.xmind)")
-        if file:
-            filename = os.path.basename(file)
+    def on_select_file_click(self, event):
+        """处理文件选择"""
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(self, "选择文件", "", "XMind Files (*.xmind)", options=options)
+
+        if file_path:
+            # 显示选择的文件路径
+            file_name = os.path.basename(file_path)
+            self.select_file_label.setText(file_name)  # 覆盖 "请选择文件" 文本
+            self.selected_file_path = file_path
+
+    def eventFilter(self, source, event):
+        """过滤鼠标悬停和离开事件"""
+        if source == self.select_file_label:
+            if event.type() == QEvent.Enter:
+                # 鼠标进入事件，改变文字颜色和加下划线
+                self.select_file_label.setStyleSheet("color: green; text-decoration: underline;")
+            elif event.type() == QEvent.Leave:
+                # 鼠标离开事件，恢复默认样式
+                self.select_file_label.setStyleSheet("color: blue;")
+        return super().eventFilter(source, event)
+
+    def startConversion(self):
+        if self.selected_file_path:
+            filename = os.path.basename(self.selected_file_path)
             destination = self.get_unique_file_path(filename)  # 生成唯一文件名
 
             try:
-                shutil.copy(file, destination)  # 复制文件到目标位置
+                shutil.copy(self.selected_file_path, destination)  # 复制文件到目标位置
                 create_on = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 # 使用带时间戳的文件名插入记录
                 self.db.insert_record(name=os.path.basename(destination), create_on=create_on, note="上传的XMind文件")
-                self.load_data()
+
+                testcases = get_xmind_testcase_list(destination)
+
+                current_geometry = self.geometry()
+                x, y = current_geometry.x() + 20, current_geometry.y() + 20  # 小幅度偏移
+
+                self.preview_window = PreviewWindow(destination, testcases, x, y)
+                self.preview_window.show()
+                self.close()
             except Exception as e:
                 self.show_message("上传错误", str(e))
+        else:
+            self.show_message('提示', '请选择一个文件！')
 
     def get_unique_file_path(self, filename):
         """确保文件名唯一，如果已存在则添加时间戳"""
@@ -460,15 +543,6 @@ class MainWindow(QMainWindow):
             timestamp = datetime.now().strftime("_%Y%m%d_%H%M%S")
             new_filename = f"{base_filename}{timestamp}{file_extension}"
         return os.path.join(self.upload_folder, new_filename)
-
-    def startConversion(self):
-        if not self.xmind_file:
-            return
-        current_geometry = self.geometry()
-        x, y = current_geometry.x(), current_geometry.y()
-        self.preview_window = PreviewWindow(self.xmind_file, x, y)
-        self.preview_window.show()
-        self.close()
 
     def show_message(self, title, message):
         QMessageBox.information(self, title, message)
