@@ -12,6 +12,14 @@ from xmind2testcase.utils import get_xmind_testcase_list, get_xmind_testsuites
 from xmind2testcase.zentao import xmind_to_zentao_csv_file
 
 
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS  # PyInstaller 打包后的临时路径
+    except Exception:
+        base_path = os.path.abspath(".")  # 开发环境中的当前路径
+    return os.path.join(base_path, relative_path)
+
+
 class PreviewWindow(QMainWindow):
     def __init__(self, xmind_file, testcases, x, y):
         super().__init__()
@@ -23,7 +31,7 @@ class PreviewWindow(QMainWindow):
             self.suite_count += len(suite.sub_suites)
         self.setWindowTitle(f"{os.path.basename(xmind_file)} - Preview")
         self.setGeometry(x, y, 1000, 800)
-        self.setWindowIcon(QIcon("logo.png"))
+        self.setWindowIcon(QIcon(resource_path("logo.png")))
         self.initUI()
 
     def initUI(self):
@@ -295,7 +303,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("XMind 转换器")
         self.setGeometry(100, 100, 1000, 800)
-        self.setWindowIcon(QIcon("logo.png"))
+        self.setWindowIcon(QIcon(resource_path("logo.png")))
         self.db = Database()
         self.saved_geometry = self.geometry()
         self.upload_folder = "upload"
