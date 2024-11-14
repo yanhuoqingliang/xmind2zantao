@@ -2,14 +2,54 @@ import sys
 import os
 import shutil
 import sqlite3
+from time import sleep
+
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QTableWidget, \
-    QTableWidgetItem, QFileDialog, QLabel, QHBoxLayout, QHeaderView, QSizePolicy, QMessageBox
-from PyQt5.QtCore import Qt, QEvent
+    QTableWidgetItem, QFileDialog, QLabel, QHBoxLayout, QHeaderView, QSizePolicy, QMessageBox, QSpacerItem, QTextEdit
+from PyQt5.QtCore import Qt, QEvent, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QCursor, QIcon
 from datetime import datetime
 
 from xmind2testcase.utils import get_xmind_testcase_list, get_xmind_testsuites
 from xmind2testcase.zentao import xmind_to_zentao_csv_file
+
+
+class DeviceQueryThread(QThread):
+    devices_found = pyqtSignal(dict, dict)
+
+    def run(self):
+        # 获取 Android 设备列表
+        android_devices = self.get_device_list('android')
+        # 获取 iOS 设备列表
+        ios_devices = self.get_device_list('ios')
+
+        # 发射信号，将结果传递回主线程
+        self.devices_found.emit(android_devices, ios_devices)
+
+    def get_device_list(self, platform):
+        global d, n
+        devices = {}
+        if platform == 'ios':
+            ios_res = os.popen('tidevice list').readlines()
+            for r in ios_res:
+                original_list = r.split('  ')
+                filtered_list = list(filter(lambda x: x.strip() != '', original_list))
+                if len(filtered_list) > 1:
+                    d = filtered_list[0]
+                    n = filtered_list[3]
+                if d != 'UDID' and n != 'MarketName':
+                    devices[d] = n
+            return devices
+        elif platform == 'android':
+            android_res = os.popen('adb devices').readlines()
+            for r in android_res:
+                if '\tdevice' in r:
+                    d = r.split('\t')[0]
+                    n = os.popen('adb -s ' + d + ' shell getprop ro.product.model').readlines()[0].replace('\n', '')
+                    devices[d] = n
+            return devices
+        else:
+            print(f'暂不支持 {platform} 平台设备')
 
 
 def resource_path(relative_path):
@@ -18,6 +58,104 @@ def resource_path(relative_path):
     except Exception:
         base_path = os.path.abspath(".")  # 开发环境中的当前路径
     return os.path.join(base_path, relative_path)
+
+
+class BatchInstallWindow(QMainWindow):
+    def __init__(self, x, y):
+        super().__init__()
+        self.setWindowTitle("批量安装应用")
+        self.setGeometry(x, y, 1000, 800)
+        self.setWindowIcon(QIcon(resource_path("logo.png")))
+        self.initUI()
+
+    def initUI(self):
+        central_widget = QWidget(self)
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+
+        top_layout = QHBoxLayout()
+
+        self.back_button = self.create_button("返回主页", "#03A9F4", "#0288D1", self.goBack)
+        top_layout.addWidget(self.back_button)
+
+        self.devices_button = self.create_button("查看在线设备", "#03A9F4", "#0288D1", self.deviceList)
+        top_layout.addWidget(self.devices_button)
+
+        # 添加选择和安装按钮
+        self.select_and_install_button = self.create_button("选择文件批量安装", "#03A9F4", "#0288D1", self.selectAndInstall)
+        top_layout.addWidget(self.select_and_install_button)
+
+        main_layout.addLayout(top_layout)
+
+        # 添加清空日志按钮
+        self.clear_log_button = self.create_button("清空日志", "#FF5722", "#E64A19", self.clearLog)
+        main_layout.addWidget(self.clear_log_button)
+
+        # 添加日志输出组件
+        self.log_output = QTextEdit(self)
+        self.log_output.setReadOnly(True)  # 设置为只读
+        self.log_output.setFont(QFont("Arial", 10))
+        main_layout.addWidget(self.log_output)
+
+        # 初始化窗口大小
+        self.show()
+
+    def clearLog(self):
+        self.log_output.clear()  # 清空日志输出区域
+        # self.log_output.append("日志已清空。")  # 输出日志信息
+
+    def selectAndInstall(self):
+        options = QFileDialog.Options()
+        file_paths, _ = QFileDialog.getOpenFileNames(self, "选择文件", "", "All Files (*)", options=options)
+        if file_paths:
+            for file_path in file_paths:
+                self.log_output.append(f"选择的文件: {file_path}")  # 输出日志信息
+
+            # 开始安装
+            self.log_output.append("开始批量安装...")  # 输出日志信息
+            # 在这里实现批量安装逻辑
+            # 例如: for file_path in file_paths: install(file_path)
+            self.log_output.append("批量安装完成。")  # 输出日志信息
+
+    def deviceList(self):
+        self.log_output.append("正在查询设备...")  # 输出日志信息
+
+        # 启动设备查询线程
+        self.device_query_thread = DeviceQueryThread()
+        self.device_query_thread.devices_found.connect(self.updateDeviceList)
+        self.device_query_thread.start()
+
+    def updateDeviceList(self, android_devices, ios_devices):
+        if android_devices or ios_devices:
+            self.log_output.append(f"Android 设备：{android_devices}")
+            self.log_output.append(f"iOS 设备：{ios_devices}")
+            self.log_output.append("设备查询完成。")
+        else:
+            self.log_output.append("没有找到可用的设备。")  # 输出日志信息
+
+    def create_button(self, text, color, hover_color, func):
+        button = QPushButton(text, self)
+        button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {color};
+                color: white;
+                font-size: 12px;
+                padding: 8px;
+                border-radius: 5px;
+            }}
+            QPushButton:hover {{
+                background-color: {hover_color};
+            }}
+        """)
+        button.clicked.connect(func)
+        # button.setFixedWidth(120)  # 设置按钮宽度
+        return button
+
+    def goBack(self):
+        self.close()
+        self.main_window = MainWindow()
+        self.main_window.show()
+        self.main_window.move(self.main_window.saved_geometry.topLeft())
 
 
 class PreviewWindow(QMainWindow):
@@ -315,6 +453,11 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
+        # 创建批量安装应用按钮
+        self.batch_install_button = self.create_button("批量安装应用", "#FF5722", "#F44336", self.on_batch_install_click)
+        self.batch_install_button.setFixedWidth(120)  # 设置按钮宽度
+        main_layout.addWidget(self.batch_install_button)
+
         self.title_label = QLabel("XMIND TO TESTCASE", self)
         self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setFont(QFont("Arial", 30, QFont.Bold))
@@ -344,6 +487,17 @@ class MainWindow(QMainWindow):
 
         self.selected_file_path = None
         self.load_data()
+
+    def on_batch_install_click(self):
+        # 批量安装应用按钮的点击事件处理逻辑
+        print("批量安装应用按钮被点击")
+
+        current_geometry = self.geometry()
+        x, y = current_geometry.x() + 20, current_geometry.y() + 20  # 小幅度偏移
+
+        self.batch_install_window = BatchInstallWindow(x, y)
+        self.batch_install_window.show()
+        self.close()
 
     def create_button(self, text, color, hover_color, func):
         button = QPushButton(text, self)
